@@ -15,7 +15,7 @@ setInterval(() => {
 
     for (const script of scripts) {
       const code = script.innerHTML;
-      const match = code.match(/document\.getElementById\("radio(\d+)"\)\.style\.background\s*=\s*["']#8ac007["']/i);
+      const match = code.match(/document\.getElementById\("radio(\d+)"\)\.style\.background\s*=\s*["']#FF7958["']/i);
       if (match) {
         matchRadioNum = match[1];
         break;
