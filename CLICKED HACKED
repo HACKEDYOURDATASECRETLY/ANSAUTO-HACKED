@@ -1,54 +1,139 @@
-// 🔇 Console को चुप कर दो (सभी लॉग और एरर को डिसेबल करो)
-console.log = function () {};
-console.error = function () {};
+(() => {
+  const githubJsonUrl = "fixed_answers.json";
+  const questionAnswerMap = {};
+  const fallbackPairs = [];
+  const askedQuestions = new Set();
 
-// हर 5 सेकंड में यह कोड चलाओ
-setInterval(() => {
-  try {
-    // iframe को ढूंढो
-    const iframe = document.getElementById("stallexam");
-    if (!iframe) return; // अगर iframe नहीं मिला तो रुक जाओ
+  async function loadMappings() {
+    try {
+      const res = await fetch(githubJsonUrl);
+      if (!res.ok) throw new Error("Mapping file load failed.");
+      const raw = await res.json();
+      for (const [q, a] of Object.entries(raw)) {
+        if (!questionAnswerMap[q]) questionAnswerMap[q] = [];
+        if (!questionAnswerMap[q].includes(a)) {
+          questionAnswerMap[q].push(a);
+        }
+      }
+      console.log(`🟩 ✅ ${Object.keys(questionAnswerMap).length} question mappings लोड हुए`);
+    } catch (err) {
+      console.error("❌ Mapping load error:", err.message);
+    }
+  }
 
-    // iframe का document प्राप्त करो
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-    if (!iframeDoc) return; // अगर document नहीं मिला तो रुक जाओ
+  async function wait(ms) {
+    return new Promise((res) => setTimeout(res, ms));
+  }
 
-    // iframe में सभी script tags ढूंढो
-    const scripts = iframeDoc.querySelectorAll("script");
-    let matchRadioNum = null;
+  async function autoAnswerLoop() {
+    while (true) {
+      await wait(800);
+      const iframe = document.querySelector("iframe#stallexam, iframe[name='qframe']");
+      if (!iframe) continue;
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!doc || !doc.body.innerText.includes("Question")) continue;
+      const qImg = doc.querySelector('img[name="qframe"]');
+      if (!qImg) continue;
+      const qSrc = qImg.getAttribute("src") || "";
+      if (qSrc.length < 1247) continue;
+      const qCode = qSrc.substring(1167, 1247);
+      if (askedQuestions.has(qCode)) continue;
+      askedQuestions.add(qCode);
+      console.log("🟩 ✅ Question HTML:", qCode);
 
-    // हर script के कोड को चेक करो
-    for (const script of scripts) {
-      const code = script.innerHTML;
-      // उस कोड को ढूंढो जहाँ सही उत्तर हरे रंग से हाइलाइट होता है
-      const match = code.match(/document\.getElementById\("radio(\d+)"\)\.style\.background\s*=\s*["']#8ac007["']/i);
-      if (match) {
-        matchRadioNum = match[1]; // सही उत्तर का नंबर निकालो
+      const mappedAnswers = questionAnswerMap[qCode] || [];
+      console.log(`🟩 🔍 Found ${mappedAnswers.length} possible answer(s) for this question`);
+
+      let matchFound = false;
+
+      if (mappedAnswers.length > 0) {
+        const allChoices = Array.from(doc.querySelectorAll("img[id^='choice']"));
+        for (const ansHtml of mappedAnswers) {
+          for (let i = 0; i < allChoices.length; i++) {
+            const choiceImg = allChoices[i];
+            const src = choiceImg?.getAttribute("src") || "";
+            const outer = choiceImg?.outerHTML || "";
+            const code = src.substring(1191, 1271);
+            if (src.includes(ansHtml) || outer.includes(ansHtml) || code.includes(ansHtml)) {
+              const radio = doc.getElementById(`stallradio${i + 1}`);
+              if (radio) {
+                radio.checked = true;
+                const label = radio.closest("label") || radio.parentElement;
+                if (label) {
+                  label.style.border = "2px solid green";
+                  label.style.background = "#d0ffd0";
+                }
+                const confirm = doc.getElementById("confirmbut");
+                if (confirm) {
+                  confirm.disabled = false;
+                  confirm.click();
+                  console.log("🟩 ✅ Matched answer selected and confirmed.");
+                }
+                matchFound = true;
+                break;
+              }
+            }
+          }
+          if (matchFound) break;
+        }
+      }
+
+      if (!matchFound) {
+        console.warn("🟧 कोई भी mapped answer match नहीं हुआ — manual पूछ रहे हैं");
+        const choiceNum = prompt("❓ Auto answer नहीं मिला। कृपया सही विकल्प संख्या दर्ज करें (1-4):");
+        if (!["1", "2", "3", "4"].includes(choiceNum)) return;
+        const manualImg = doc.querySelector(`img#choice${choiceNum}`);
+        const manualSrc = manualImg?.getAttribute("src") || "";
+        const aCode = manualSrc.substring(1191, 1271);
+
+        const stallRadio = doc.getElementById(`stallradio${choiceNum}`);
+        if (stallRadio) {
+          stallRadio.checked = true;
+          const label = stallRadio.closest("label") || stallRadio.parentElement;
+          if (label) {
+            label.style.border = "2px solid orange";
+            label.style.background = "#fff0d0";
+          }
+          const confirm = doc.getElementById("confirmbut");
+          if (confirm) {
+            confirm.disabled = false;
+            confirm.click();
+            console.log("🟧 ✅ Manual option selected & confirm clicked.");
+          }
+        }
+
+        await wait(1000);
+        const confirmAgain = prompt(`🔁 आपने विकल्प ${choiceNum} चुना था। कृपया CONFIRM करें (1-4):`);
+        const finalChoice = ["1", "2", "3", "4"].includes(confirmAgain) ? confirmAgain : choiceNum;
+        const finalImg = doc.querySelector(`img#choice${finalChoice}`);
+        const finalSrc = finalImg?.getAttribute("src") || "";
+        const finalACode = finalSrc.substring(1191, 1271);
+
+        console.log("🟧 Final Answer HTML saved:", finalACode);
+        fallbackPairs.push([qCode, finalACode]);
+      }
+
+      await wait(2000);
+      const nextIframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (nextIframeDoc && nextIframeDoc.body.innerText.includes("Test Completed")) {
+        console.log("🟦 Test Complete. Manual Q/A mapped shown.");
         break;
       }
     }
 
-    // अगर सही उत्तर का नंबर नहीं मिला तो रुक जाओ
-    if (!matchRadioNum) return;
-
-    // सही रेडियो बटन को ढूंढो (जिसका ID "stallradio" + नंबर है)
-    const radioId = "stallradio" + matchRadioNum;
-    const radioBtn = iframeDoc.getElementById(radioId);
-    if (!radioBtn) return; // अगर रेडियो बटन नहीं मिला तो रुक जाओ
-
-    // रेडियो बटन को चेक करो (सही उत्तर चुनो)
-    radioBtn.checked = true;
-
-    // कन्फर्म बटन ढूंढो
-    const confirmBtn = iframeDoc.getElementById("confirmbut");
-    if (!confirmBtn) return; // अगर बटन नहीं मिला तो रुक जाओ
-
-    // बटन को एनेबल करो और क्लिक करो
-    confirmBtn.disabled = false;
-    confirmBtn.removeAttribute("disabled");
-    confirmBtn.click();
-
-  } catch (err) {
-    // किसी भी तरह की error को दबा दो (कुछ न दिखाओ)
+    for (const [q, a] of fallbackPairs) {
+      const wrap = document.createElement("div");
+      wrap.style = "position:fixed;bottom:20px;left:20px;background:#222;color:#0f0;padding:10px;margin:5px;z-index:99999;border:2px solid #0f0;border-radius:5px;";
+      wrap.innerHTML = `
+        <div>📋 Q/A Pair Saved</div>
+        <textarea style="width:300px;height:40px;font-size:12px;">"${q}": "${a}"</textarea>
+        <button onclick="navigator.clipboard.writeText(this.previousElementSibling.value)">Copy</button>
+      `;
+      document.body.appendChild(wrap);
+    }
   }
-}, 5000); // हर 5000 मिलीसेकंड (5 सेकंड) के बाद दोहराओ
+
+  loadMappings().then(() => {
+    autoAnswerLoop();
+  });
+})();
